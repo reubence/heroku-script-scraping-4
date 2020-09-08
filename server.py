@@ -1,41 +1,16 @@
 # Paste your python program here
-from apiclient.discovery import build
-from googleapiclient.errors import HttpError
-import gspread
-
-# Set DEVELOPER_KEY to the API key value from the APIs & auth > Registered apps
-# tab of
-#   https://cloud.google.com/console
-# Please ensure that you have enabled the YouTube Data API for your project.
-# TODO: CHANGE TO YOUR OWN API
-DEVELOPER_KEY = "AIzaSyCxx5KJAIbRw81BVA8eukEc9oyhVbXBwXg"
-YOUTUBE_API_SERVICE_NAME = "youtube"
-YOUTUBE_API_VERSION = "v3"
-
-gc = gspread.service_account(filename='data/sheets-json-secret-key.json')
-sh = gc.open_by_url(
-    'https://docs.google.com/spreadsheets/d/15dA7G6TQozLCQHC6_42aJFz7gmid06Ktm4cRKUn90xs')
-
-# start_date = datetime(year=2020, month=8, day=1, tzinfo=timezone.utc).astimezone()
-# end_date = datetime(year=2020, month=8, day=31, tzinfo=timezone.utc).astimezone()
-# start_date = start_date.isoformat("T") + "Z"
-# end_date = end_date.isoformat("T") + "Z"
-
-time1 = '2020-06-01T00:00:00Z'
-time2 = '2020-06-15T00:00:00Z'
-time3 = '2020-06-30T00:00:00Z'
-
+import datetime
 import pickle
-import pandas as pd
 import re
-from spacy.lang.en import English
+import nltk
+import pandas as pd
+from instaloader import Instaloader, Profile
 from nltk import word_tokenize
-
-# import nltk
-# nltk.download('punkt')
-# nltk.download('averaged_perceptron_tagger')
-# nltk.download('wordnet')
-# nltk.download('stopwords')
+from spacy.lang.en import English
+import gspread
+nltk.download('punkt')
+gc = gspread.service_account(filename='data/sheets-json-secret-key.json')
+sh = gc.open_by_url('https://docs.google.com/spreadsheets/d/1U3gypkEa3Qjbf4f5w3zFFEm5P4_Jfkble3zsyg6Isc4/edit?usp=sharing')
 
 emoticons_sad = {':L', ':-/', '>:/', ':S', '>:[', ':@', ':-(', ':[', ':-||', '=L', ':<', ':-[', ':-<', '=\\', '=/',
                  '>:(', ':(', '>.<', ":'-(", ":'(", ':\\', ':-c', ':c', ':{', '>:\\', ';('}
@@ -100,7 +75,6 @@ def cleaning(text):
 
 cleaning('Yay the cleaning PiPeline works!! :D #yebish')
 
-
 ####
 url = "https://www.dropbox.com/s/manoypretrz3sq8/pipeline.sav?dl=1"  # dl=1 is important
 import urllib.request
@@ -113,85 +87,65 @@ with open('data/model.sav', "wb") as f:
     f.write(data)
 ####
 
-
 pipeline = pickle.load(open('data/model.sav', 'rb'))
-pipeline.predict(['bad'])[0]
+pipeline.predict(['good'])
+L = Instaloader()
 
-youtube = build(YOUTUBE_API_SERVICE_NAME, YOUTUBE_API_VERSION, developerKey=DEVELOPER_KEY)
-
-# TODO: CHANGE NAMES TO THOSE ASSIGNED TO YOU
-names = ['Shreyas Talpade']
+start_date = datetime.date(year=2020, month=8, day=1)
+end_date = datetime.date(year=2020, month=8, day=31)
+# TODO: CHANGE HANDLE TO THE ONE ASSIGNED TO YOU
+df = pd.read_csv('data/Page Rank Handles.csv', encoding='cp1252')
+handles = df['Insta Handle'].dropna().tolist()
+print("yo")
 rows = []
-comments_list = []
-for name in names:
-    print(name)
-    videos = 0
-    views = 0
-    likes = 0
-    dislikes = 0
-    favorites = 0
-    comments = 0
+comments = []
+for handle in handles:
+    print(handle)
+    profile = Profile.from_username(L.context, handle)
+    num_followers = profile.followers
+    total_likes = 0
+    total_comments = 0
     pos_comments = 0
     neg_comments = 0
-    # Call the search.list method to retrieve results matching the specified
-    # query term.
-    search_response1 = youtube.search().list(q=name, part="id", maxResults=50, publishedAfter=time1,
-                                             publishedBefore=time2, order='viewCount').execute()
-    search_response2 = youtube.search().list(q=name, part="id", maxResults=50, publishedAfter=time2,
-                                             publishedBefore=time3, order='viewCount').execute()
+    total_posts = 0
+    for post in profile.get_posts():
+        if end_date < post.date_utc.date():
+            continue
+        if post.date_utc.date() < start_date:
+            break
+        print(total_posts)
+        total_likes += post.likes
+        total_comments += post.comments
 
-    # Add each result to the appropriate list, and then display the lists of matching videos, channels, and playlists.
-    for search_result in search_response1.get("items", []) + search_response2.get("items", []):
-        if search_result["id"]["kind"] == "youtube#video":
-            videoId = search_result["id"]["videoId"]
-
-            # Get video statistics
-            video_response = youtube.videos().list(id=videoId, part="statistics").execute()
-            videos += 1
-            print(videos)
-            for video_result in video_response.get("items", []):
-                views += int(video_result["statistics"]["viewCount"])
-                if 'likeCount' in video_result["statistics"]:
-                    likes += int(video_result["statistics"]["likeCount"])
-                if 'dislikeCount' in video_result["statistics"]:
-                    dislikes += int(video_result["statistics"]["dislikeCount"])
-                if 'commentCount' in video_result["statistics"]:
-                    comments += int(video_result["statistics"]["commentCount"])
-                if 'favoriteCount' in video_result["statistics"]:
-                    favorites += int(video_result["statistics"]["favoriteCount"])
-
-            # Get video comments
-            try:
-                response = youtube.commentThreads().list(videoId=videoId, part="snippet").execute()
-            except HttpError:
-                continue
-            for result in response.get("items", []):
-                comment = result['snippet']['topLevelComment']['snippet']['textOriginal']
-                comments_list.append([name, comment])
-
-                clean_comment = cleaning(comment)
-                if clean_comment != '':
-                    # calculate senti
-                    senti = pipeline.predict([clean_comment])[0]
-                    if senti == 'positive':  # positive
-                        pos_comments += 1
-                    elif senti == 'negative':  # negative
-                        neg_comments += 1
-    rows.append([name, videos, views, likes, dislikes, comments, pos_comments, neg_comments, favorites])
-yt = pd.DataFrame(rows,
-                  columns=['name', 'videos', 'views', 'likes', 'dislikes', 'comments', 'pos_comments', 'neg_comments',
-                           'favorites'])
-comments_df = pd.DataFrame(comments_list, columns=['handle', 'comment'])
-# yt.to_csv('yt_july.csv', index=False)
-# comments_df.to_csv('yt_july_comments.csv', index=False)
-
+        getcomments = list(post.get_comments())
+        all_comments = 0
+        good_comments = 1
+        while good_comments <= 1000 and all_comments < len(getcomments):
+            comment = getcomments[all_comments]
+            clean_comment = cleaning(comment.text)
+            all_comments += 1
+            if clean_comment != '':
+                # calculate senti
+                good_comments += 1
+                comments.append([handle, comment.text])
+                senti = pipeline.predict([clean_comment])[0]
+                if senti == 4:  # positive
+                    pos_comments += 1
+                elif senti == 0:  # negative
+                    neg_comments += 1
+        total_posts += 1
+    # print(handle, total_likes, pos_comments, neg_comments, total_comments, total_posts, num_followers)
+    rows.append([handle, total_likes, pos_comments, neg_comments, total_comments, total_posts, num_followers])
+insta = pd.DataFrame(rows,
+                     columns=['handle', 'total_likes', 'pos_comments', 'neg_comments', 'total_comments', 'total_posts',
+                              'num_followers'])
+comments_df = pd.DataFrame(comments, columns=['handle', 'comment'])
+# insta.to_csv(''.join(handles) + '_insta.csv', index=False)
+# comments_df.to_csv(''.join(handles) + '_insta_comments.csv', index=False)
+# TODO: WILL SAVE TO CSV
 worksheet = sh.get_worksheet(0)
 
 worksheet.update([comments_df.columns.values.tolist()] + comments_df.values.tolist())
 worksheet = sh.get_worksheet(1)
 
-worksheet.update([yt.columns.values.tolist()] + yt.values.tolist())
-
-# TODO: WILL SAVE TO CSV
-
-
+worksheet.update([insta.columns.values.tolist()] + insta.values.tolist())
